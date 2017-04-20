@@ -12,9 +12,13 @@ global const datapath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/data"
 global const jldpath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/dataJLD"
 
 
-function loss(w, x, ygold)
+function loss(w, x, ygold; lambda=0.000001)
   ypred = predict(w,x)
   ynorm = logp(ypred,1)
+#  J = -sum(ygold .* ynorm)/size(ygold, 2)
+#=  if lambda != 0
+    J += (lambda/2) * sum(sumabs2(wi) for wi in w[1:2:end])
+  end =#
   return -sum(ygold .* ynorm)/size(ygold, 2)
 end
 
@@ -43,14 +47,15 @@ end
 
 lossgradient = grad(loss)
 
-function train(w, data; lr = 0.1, epochs = 20, atype = Array{Float32})
+function train(w, prms, data; lr = 0.1, epochs = 1, atype = Array{Float32})
   for epoch=1:epochs
     for (x,y) in data
-      x = convert(atype, x)
+      newx = perturb(x)
+      newx = convert(atype, newx)
       y = convert(atype, y)
-      g = lossgradient(w, x, y)
+      g = lossgradient(w, newx, y)
       for i=1:length(w)
-        axpy!(-lr, g[i], w[i])
+        update!(w[i], g[i], prms[i])
       end
     end
   end
@@ -75,13 +80,19 @@ end
 
 function perturb( x )
   new_x = zeros(Float32, size(x, 1), size(x, 2), size(x, 3), batchsize)
-  intvl = -10:10
+  intvl = -32:32
+  scales = 0.7:0.1:1.3
   for i=1:batchsize
     roll = rand()
     shiftr = rand(intvl)
     shiftc = rand(intvl)
+    scale =  rand(scales)
     if roll > 0.45
-      new_x[:, :, :, i] = imrotate(x[:,:,:,i], rand(-5:5))
+      new_x[:, :, :, i] = imscale(x[:, :, :, i], new_x[:, :, :, i], scale)
+    end
+    roll = rand()
+    if roll > 0.45
+      new_x[:, :, :, i] = imrotate(x[:,:,:,i], rand(-33:3:33))
     else
       new_x[:, :, :, i] = x[:, :, :, i]
     end
@@ -181,10 +192,7 @@ function fillbatch!(data, labels, imindex, imsize::Int, batchind, len)
 end
 
 function initparams(weights)
-  prms = Any[]
-  for i=1:length(weights)
-    push!(prms, Adam(weights[i]; lr = 0.1))
-  end
+  prms = map(x->Sgd(lr=0.01,gclip=0), weights)
   return prms
 end
 
@@ -207,35 +215,35 @@ function xavier(a...)
   w = 2s*w-s
 end
 
-function weights(;atype=KnetArray{Float32})
+function weights(;atype=KnetArray{Float32}, bias=0.01, winit = 0.01)
   w = Array(Any, 16)
   #Convolutional layers
   #Layer No 1
   w[1] = xavier(15, 15, channels, 64)
-  w[2] = zeros(1, 1, 64, 1)
+  w[2] = bias*ones(1, 1, 64, 1)
   #Layer No 2
   w[3] = xavier(5, 5, 64, 128)
-  w[4] = zeros(1, 1, 128, 1)
+  w[4] = bias*ones(1, 1, 128, 1)
   #Layer No 3
   w[5] = xavier(3, 3, 128, 256)
-  w[6] = zeros(1, 1, 256, 1)
+  w[6] = bias*ones(1, 1, 256, 1)
   #Layer No 4
   w[7] = xavier(3, 3, 256, 256)
-  w[8] = zeros(1, 1, 256, 1)
+  w[8] = bias*ones(1, 1, 256, 1)
   #Layer No 5
   w[9] = xavier(3, 3, 256, 256)
-  w[10] = zeros(1, 1, 256, 1)
+  w[10] = bias*ones(1, 1, 256, 1)
 
   #Fully connected layers
   #Layer 6
   w[11] = xavier(512, 12544)
-  w[12] = zeros(512, 1)
+  w[12] = bias*ones(512, 1)
   #Layer 7
   w[13] = xavier(512, 512)
-  w[14] = zeros(512, 1)
+  w[14] = bias*ones(512, 1)
   #Layer 8
   w[15] = xavier(250, 512)
-  w[16] = zeros(250, 1)
+  w[16] = bias*ones(250, 1)
   return map(a->convert(atype, a), w)
 end
 
@@ -348,52 +356,121 @@ if Pkg.installed("JLD") != nothing
 end
 
 function test(data; scales = [225 256 128 192 64], atype = KnetArray{Float32})
-  shifts = [0 0; 10 10; -10 10; 10 -10; -10 -10]
+  disp = 32
+  shifts = [0 0; disp disp; -disp disp; disp -disp; -disp -disp]
   models = Any[]
   #load models for different scales
   for i in length(scales)
-    w = load("$(jldpath)/floatmodel$(scales[i]).jld")["model"]
+    w = load("$(jldpath)/Models/FloatModel/tmp/floatmodel$(scales[i]).jld")["model"]
     w = map(a->convert(atype, a), w)
     push!(models, w)
   end
-
+  info("Models are loaded!")
   #initialize array for predictions
   ypred = Any[]
   for bind=1:length(data)
-    push!(ypred, convert(atype, zeros(Float32, size(data[bind][2]))))
+    push!(ypred, KnetArray(zeros(Float32, size(data[bind][2]))))
   end
-
+  info("Prediction arrays have been initialized!")
   #accumulate predictions for each model
   for i in length(models)
     #update predictions using current model
     model = models[i]
-    updatepred!(data, model, ypred, shifts)
+    updateypred!(data, model, ypred, shifts; atype=atype)
   end
+  info("Fused predictions obtained!")
   correct = 0.0
   ninstance = 0.0
   for bind=1:length(data)
-    correct += countcorrect(ypred[bind], data[bind][2])
+    correct += countcorrect(ypred[bind], convert(atype, data[bind][2]))
     ninstance += size(ypred[bind], 2)
   end
   return correct/ninstance
 end
 
-function updateypred!(data, model, ypred, shifts)
+function updateypred!(data, model, ypred, shifts; atype = KnetArray{Float32})
   #iteratte over data
   for bind=1:length(data)
     x = data[bind][1]
     shiftcnt = size(shifts, 1)
+    yptmp = KnetArray(zeros(Float32, size(ypred[bind])))
     #iterate over transformations
     for j=1:shiftcnt
-      shiftr = shifts[j][1]
-      shiftc = shifts[j][2]
+      shiftr = shifts[j , 1]
+      shiftc = shifts[j , 2]
       xshifted = circshift(x, [shiftr shiftc 0 0])
       xflipped = flipdim(xshifted, 2)
       xshifted = convert(atype, xshifted)
-      ypred[bind] = ypred[bind] + predict(model, xshifted; dprob=0)
+      yptmp = yptmp .+ logp(predict(model, xshifted; dprob=0), 1)
       xflipped = convert(atype, xflipped)
-      ypred[bind]  = ypred[bind] + predict(model, xflipped; dprob=0)
+      yptmp  = yptmp .+ logp(predict(model, xflipped; dprob=0), 1)
     end
+    ypred[bind] = ypred[bind] .+ (yptmp ./ shiftcnt)
+  end
+end
+
+
+function extractfeat(w, x)
+  #Extracts features of the penultimate layer
+  x = pool(relu(conv4(w[1],x;padding=0, stride=3) .+ w[2]); window=3, stride=2)
+  x = pool(relu(conv4(w[3],x;padding=0, stride=1) .+ w[4]); window=3, stride=2)
+  for i=5:2:9
+    x = relu(conv4(w[i],x;padding=(1,1), stride=1) .+ w[i+1])
+  end
+  x = pool(x; window=3, stride = 2)
+  #fully connected layers
+  x = mat(x)
+  x = relu(w[11]*x .+ w[12])
+  return relu(w[13]*x .+ w[14])
+end
+
+function getfeats(w, data; atype = KnetArray{Float32})
+  features = nothing
+  for (x,y) in data
+    x = convert(atype, x)
+    feat = extractfeat(w, x)
+    if features == nothing
+      features = feat
+    else
+      features = hcat(features, feat)
+    end
+  end
+  return features
+end
+
+function savefeats(data; scales = [225 256 128 192 64], atype = KnetArray{Float32}, train::Bool = false)
+  models = Any[]
+  #load models for different scales
+  for i in length(scales)
+    w = load("$(jldpath)/Models/FloatModel/tmp/floatmodel$(scales[i]).jld")["model"]
+    w = map(a->convert(atype, a), w)
+    push!(models, w)
+  end
+  info("Models are loaded!")
+  features = []
+  for i in length(models)
+    #get and concatenate features
+    model = models[i]
+    if i == 1
+      features = convert(Array{Float64}, getfeats(model, data))
+    else
+      features = hcat(features, convert(Array{Float64}, getfeats(model, data)))
+    end
+  end
+  info("Features have been generated!")
+  labels = []
+  for (x,y) in data
+    for i=1:size(y, 2)
+      push!(labels, indmax(y[:, i]))
+    end
+  end
+  labels = convert(Array{Float64}, labels)
+  if train
+    save("$(jldpath)/Features/trnfeats.jld","feats", features)
+    save("$(jldpath)/Features/trnlabels.jld","labels", labels)
+  else
+    save("$(jldpath)/Features/tstfeats.jld","feats", features)
+    save("$(jldpath)/Features/tstlabels.jld","labels", labels)
   end
 end
 
@@ -405,6 +482,8 @@ function main(args=ARGS)
     ("--trained"; action=:store_true; help="check if model is trained")
     ("--readydata"; action=:store_true; help="is data preprocessed and ready")
     ("--readyindx"; action=:store_true; help="check if train and test indices are ready")
+    ("--testmode"; action=:store_true; help="true if in test mode")
+    ("--featgenmode"; action=:store_true; help="true if in feature generation")
     ("--imsize"; arg_type=Int; default=225; help="Size of input image")
     ("--epochs"; arg_type=Int; default=1; help="Number of epochs for training.")
   end
@@ -415,87 +494,94 @@ function main(args=ARGS)
 
   #global batchsize = 50
   #global datapath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/data"
-  lr = 0.01
+  lr = 0.04
   global const channels = 6
   if !o[:readyindx]
     info("Indices are not ready")
   end
-
-
   if gpu() >= 0
     atype = KnetArray{Float32}
   else
     error("SketchANet only works on GPUs")
   end
-  w = weights(atype=atype)
-  prms = initparams(w)
 
-  global const cmap = initchannelmap()
-  #println("Type of weights array $(typeof(w))")
-  #println(o[:readydata])
 
-  #println("Type of o[:imsize] $(typeof(o[:imsize]))")
-  if o[:readydata]
-    println("Data is ready")
-    datatrn = load("$(jldpath)/datatrn$(o[:imsize]).jld")["datatrn"]
-  #  datatst = load("$(jldpath)/datatst225.jld")["datatst"]
+  if o[:testmode]
+    info("In test mode.")
+    datatst = load("$(jldpath)/datatst225.jld")["datatst"]
+    testaccuracy = test(datatst; scales = [225], atype = atype)
+    println("Test accuracy: $(testaccuracy)")
+  elseif o[:featgenmode]
+    info("In feature generating mode.")
+    data = load("$(jldpath)/datatst225.jld")["datatst"]
+    savefeats(data; scales = [225], train = false)
+    data = load("$(jldpath)/datatrn225.jld")["datatrn"]
+    savefeats(data; scales = [225], train = true)
   else
-    println("Data is not ready")
-    trnind, tstind = gettraintestindices(dataperclass; readyindx=o[:readyindx])
-    datatrn = initdata(trnind; train = true, imsize = o[:imsize])
-    datatst = initdata(tstind; train = false, imsize = o[:imsize])
-    println("Data minibatched successfully")
-  #  save("$(jldpath)/datatrn$(o[:imsize]).jld","datatrn", datatrn)
-  #  save("$(jldpath)/datatst$(o[:imsize]).jld","datatst", datatst)
+    println("In train mode. Imsize=$(o[:imsize])")
+    w = weights(atype=atype)
+    prms = map(x->Adam(), w)
+    global const cmap = initchannelmap()
+
+    #println("Type of o[:imsize] $(typeof(o[:imsize]))")
+    if o[:readydata]
+      println("Data is ready")
+      datatrn = load("$(jldpath)/datatrn$(o[:imsize]).jld")["datatrn"]
+    #  datatst = load("$(jldpath)/datatst225.jld")["datatst"]
+    else
+      println("Data is not ready")
+      trnind, tstind = gettraintestindices(dataperclass; readyindx=o[:readyindx])
+      datatrn = initdata(trnind; train = true, imsize = o[:imsize])
+      datatst = initdata(tstind; train = false, imsize = o[:imsize])
+      println("Data minibatched successfully")
+    #  save("$(jldpath)/datatrn$(o[:imsize]).jld","datatrn", datatrn)
+    #  save("$(jldpath)/datatst$(o[:imsize]).jld","datatst", datatst)
+    end
+
+
+    trnlosses = []
+    tstlosses = []
+    trnerr  = []
+    tsterr  = []
+    iters = []
+    println("training started")
+    flush(STDOUT)
+    #addprocs(1)
+    for i=1:500
+      w = trainvanilla(w, prms, datatrn; lr=lr, epochs = 1, atype=atype)
+      tstacc, tstloss = 0, 0
+      trnacc, trnloss = 0, 0
+    #  if i%50 == 0
+        trnacc, trnloss = accuracyvanilla(w, datatrn; atype=atype)
+  #    end
+      #tstacc, tstloss = accuracyvanilla(w, datatst; atype=atype)
+      if i%100 == 0
+        lr = lr/2
+      end
+    #  append!(trnlosses, trnloss)
+  	#	append!(tstlosses, tstloss)
+  #		append!(iters, i)
+  	#	append!(tsterr, 1-tstacc)
+  #		append!(trnerr, 1-trnacc)
+      @printf("epoch: %d trn accuracy-loss: %g - %g tst accuracy-loss: %g - %g\n", i, trnacc, trnloss, tstacc, tstloss)
+    #  if i%50 == 0
+        flush(STDOUT)
+  #    end
+      if i%50 == 0
+        floatmodel = map(a->convert(Array{Float32}, a), w)
+        save("$(jldpath)/tmpfloatnewfinalmodel$(o[:imsize]).jld","model", floatmodel)
+      end
+      #flush(STDOUT)
+    end
+    #save("$(jldpath)/knetarrmodel$(o[:imsize]).jld","model", w)
+    floatmodel = map(a->convert(Array{Float32}, a), w)
+    save("$(jldpath)/randnfloatnewfinalmodel$(o[:imsize]).jld","model", floatmodel)
+    save("$(jldpath)/randnfloatnewfinalmodel$(o[:imsize]).jld","model", w)
+  #  saveplots(iters, trnlosses, tstlosses, trnerr, tsterr, "loss$(o[:imsize])", "err$(o[:imsize])")
   end
 
 
-  trnlosses = []
-  tstlosses = []
-  trnerr  = []
-  tsterr  = []
-  iters = []
-  println("training started")
-  flush(STDOUT)
-  for i=1:300
-    w = trainvanilla(w, prms, datatrn; lr=lr, epochs = 1, atype=atype)
-    tstacc, tstloss = 0, 0
-    trnacc, trnloss = 0, 0
-    if i%25 == 0
-      trnacc, trnloss = accuracyvanilla(w, datatrn; atype=atype)
-    end
-    #tstacc, tstloss = accuracyvanilla(w, datatst; atype=atype)
-    if i%50 == 0
-      lr = lr/2
-    end
-  #  append!(trnlosses, trnloss)
-	#	append!(tstlosses, tstloss)
-#		append!(iters, i)
-	#	append!(tsterr, 1-tstacc)
-#		append!(trnerr, 1-trnacc)
-    @printf("epoch: %d trn accuracy-loss: %g - %g tst accuracy-loss: %g - %g\n", i, trnacc, trnloss, tstacc, tstloss)
-    if i%20 == 0
-      flush(STDOUT)
-    end
-    if trnacc == 1
-      info("Breaking at epoch $(i)")
-      break
-    end
-    #flush(STDOUT)
-  end
-  #save("$(jldpath)/knetarrmodel$(o[:imsize]).jld","model", w)
-  floatmodel = map(a->convert(Array{Float32}, a), w)
-  save("$(jldpath)/floatmodel$(o[:imsize]).jld","model", floatmodel)
-  save("$(jldpath)/knetarrmodel$(o[:imsize]).jld","model", w)
-#  saveplots(iters, trnlosses, tstlosses, trnerr, tsterr, "loss$(o[:imsize])", "err$(o[:imsize])")
-#=
-  for i=1:50
-  	w = train(w, trnind; lr = 0.01, epochs = 4,  atype=atype)
-  	trnacc, trnloss = accuracy(w, trnind;  atype=atype)
-  	tstacc, tstloss = accuracy(w, tstind;  atype=atype)
-  	@printf("epoch: %d trn accuracy-loss: %g - %g tst accuracy-loss: %g - %g\n", i, trnacc, trnloss, tstacc, tstloss)
-  end
-  =#
+
 end
 
 main()

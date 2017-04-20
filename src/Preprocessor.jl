@@ -108,7 +108,7 @@ function saveSketch(sketch::Sketch, filename::String = "test.png"; completness=1
   strokenum = 0
   mydpi = 100
   #iterate through strokes
-  fig = figure(figsize=(225/mydpi, 225/mydpi), dpi=mydpi, facecolor = "black")
+  fig = figure(figsize=(128/mydpi, 128/mydpi), dpi=mydpi, facecolor = "black")
   strokelimit = strokelimit = Integer(ceil(completness*length(sketch.end_indices)))
   for ending_index in sketch.end_indices
     strokenum += 1
@@ -225,10 +225,11 @@ function renderSketch!(sketch, image, pixels = nothing)
   save("newtest.jpg", image)
 end
 
-function initvolume!(sketchvol, curbatch, datapath, class, cmap, instancenum, imindex; imsize::Int = 256)
+function initvolume!(sketchvol, curbatch, datapath, class, cmap, instancenum, imindex; imsize::Int = 256, trgsize::Int = 225)
+  #initialize each channel of current sketch volume
   for c = 1:size(sketchvol, 3)
     path = "$datapath/$(class)/$(cmap[c])/$(instancenum)/$(imindex).png"
-    sketchvol[:, :, c, curbatch] = sketchim(path; imsize=imsize)
+    sketchvol[:, :, c, curbatch] = sketchim(path; imsize=imsize, trgsize=trgsize)
   end
 end
 
@@ -265,6 +266,26 @@ function imrotate(img, angle)
   return imgnew
 end
 
+function imscale(img, new_img, scale)
+  if scale == 1
+    return img
+  end
+  R = size(img, 1)
+  C = size(img, 2)
+  newR = Int(floor(scale*R))
+  newC = Int(floor(scale*C))
+  sR = Int(floor(abs(newR-R)/2))
+  sC = Int(floor(abs(newC-C)/2))
+  #println("$newR $sR $(size(img, 1))")
+  img = Images.imresize(img, (newR, newC, size(img, 3)))
+  if scale < 1
+    new_img[sR+1:sR+newR, sC+1:sC+newC, :] = img
+  else
+    new_img = img[sR+1:sR+R, sC+1:sC+C, :]
+  end
+  return new_img
+end
+
 export plotSketch
 export saveSketch
 export translate2origin!
@@ -277,6 +298,7 @@ export xmirror
 export ymirror
 export renderSketch!
 export imrotate
+export imscale
 export sketchim
 export initvolume!
 end
