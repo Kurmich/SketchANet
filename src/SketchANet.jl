@@ -15,10 +15,10 @@ global const jldpath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/dataJLD"
 function loss(w, x, ygold; lambda=0.000001)
   ypred = predict(w,x)
   ynorm = logp(ypred,1)
-#  J = -sum(ygold .* ynorm)/size(ygold, 2)
-#=  if lambda != 0
-    J += (lambda/2) * sum(sumabs2(wi) for wi in w[1:2:end])
-  end =#
+#= reg = 0
+  if lambda != 0
+    reg = (lambda/2) * sum(sumabs2(wi) for wi in w[1:2:end])
+  end=#
   return -sum(ygold .* ynorm)/size(ygold, 2)
 end
 
@@ -47,42 +47,50 @@ end
 
 lossgradient = grad(loss)
 
-function train(w, prms, data; lr = 0.1, epochs = 1, atype = Array{Float32})
+function train(w, prms, data, meansketch; limit = length(data), lr = 0.1, epochs = 1, atype = Array{Float32})
   for epoch=1:epochs
     for (x,y) in data
-      newx = perturb(x)
+      newx = perturb(x, meansketch)
       newx = convert(atype, newx)
       y = convert(atype, y)
       g = lossgradient(w, newx, y)
       for i=1:length(w)
         update!(w[i], g[i], prms[i])
       end
+      if limit < 0
+        break
+      end
+      limit -= 1
     end
   end
   return w
 end
 
-function trainvanilla(w, prms, data; lr = 0.1, epochs = 1, atype = Array{Float32})
+function trainvanilla(w, prms, data, meansketch; limit = length(data), lr = 0.1, epochs = 1, atype = Array{Float32})
   #check for edge cases of bacthcount
   for epoch=1:epochs
     for (x,y) in data
-      newx = perturb(x)
+      newx = perturb(x, meansketch)
       newx = convert(atype, newx)
       y = convert(atype, y)
       g = lossgradient(w, newx, y)
       for i=1:length(w)
         axpy!(-lr, g[i], w[i])
       end
+      if limit < 0
+        break
+      end
+      limit -= 1
     end
   end
   return w
 end
 
-function perturb( x )
+function perturb( x, meansketch)
   new_x = zeros(Float32, size(x, 1), size(x, 2), size(x, 3), batchsize)
   intvl = -32:32
   scales = 0.7:0.1:1.3
-  for i=1:batchsize
+  for i=1:size(x, 4)
     roll = rand()
     shiftr = rand(intvl)
     shiftc = rand(intvl)
@@ -101,15 +109,17 @@ function perturb( x )
     if roll > 0.5
       new_x[:, :, :, i] = flipdim(new_x[:, :, :, i], 2)
     end
+    new_x[:, :, :, i] -= meansketch
   end
   return new_x
 end
 
-function accuracyvanilla(w, data; atype = Array{Float32} )
+function accuracyvanilla(w, data, meansketch; limit = length(data), atype = Array{Float32} )
   ninstance = 0
   softloss = 0
   correct = 0
   for (x,ygold) in data
+    x = x .- meansketch
     x = convert(atype, x)
     ygold = convert(atype, ygold)
     ypred = predict(w, x; dprob=0)
@@ -117,6 +127,10 @@ function accuracyvanilla(w, data; atype = Array{Float32} )
 #    println("batch: $batchnum correct: $correct")
     softloss += loss(w, x, ygold)
     ninstance += size(ygold, 2)
+    if limit < 0
+      break
+    end
+    limit -= 1
   end
   return correct/ninstance, softloss/ninstance
 end
@@ -355,13 +369,13 @@ if Pkg.installed("JLD") != nothing
   readas(d::KnetJLD) = KnetArray(d.a)
 end
 
-function test(data; scales = [225 256 128 192 64], atype = KnetArray{Float32})
+function test(data, meansketch; scales = [225 256 128 192 64], atype = KnetArray{Float32})
   disp = 32
   shifts = [0 0; disp disp; -disp disp; disp -disp; -disp -disp]
   models = Any[]
   #load models for different scales
   for i in length(scales)
-    w = load("$(jldpath)/Models/FloatModel/tmp/floatmodel$(scales[i]).jld")["model"]
+    w = load("$(jldpath)/Models/FloatModel/zero/floatmodel$(scales[i]).jld")["model"]
     w = map(a->convert(atype, a), w)
     push!(models, w)
   end
@@ -376,7 +390,7 @@ function test(data; scales = [225 256 128 192 64], atype = KnetArray{Float32})
   for i in length(models)
     #update predictions using current model
     model = models[i]
-    updateypred!(data, model, ypred, shifts; atype=atype)
+    updateypred!(data, model, ypred, shifts, meansketch; atype=atype)
   end
   info("Fused predictions obtained!")
   correct = 0.0
@@ -388,7 +402,7 @@ function test(data; scales = [225 256 128 192 64], atype = KnetArray{Float32})
   return correct/ninstance
 end
 
-function updateypred!(data, model, ypred, shifts; atype = KnetArray{Float32})
+function updateypred!(data, model, ypred, shifts, meansketch; atype = KnetArray{Float32})
   #iteratte over data
   for bind=1:length(data)
     x = data[bind][1]
@@ -398,8 +412,8 @@ function updateypred!(data, model, ypred, shifts; atype = KnetArray{Float32})
     for j=1:shiftcnt
       shiftr = shifts[j , 1]
       shiftc = shifts[j , 2]
-      xshifted = circshift(x, [shiftr shiftc 0 0])
-      xflipped = flipdim(xshifted, 2)
+      xshifted = circshift(x, [shiftr shiftc 0 0]) .- meansketch
+      xflipped = flipdim(xshifted, 2) .- meansketch
       xshifted = convert(atype, xshifted)
       yptmp = yptmp .+ logp(predict(model, xshifted; dprob=0), 1)
       xflipped = convert(atype, xflipped)
@@ -442,7 +456,7 @@ function savefeats(data; scales = [225 256 128 192 64], atype = KnetArray{Float3
   models = Any[]
   #load models for different scales
   for i in length(scales)
-    w = load("$(jldpath)/Models/FloatModel/tmp/floatmodel$(scales[i]).jld")["model"]
+    w = load("$(jldpath)/Models/FloatModel/zero/floatmodel$(scales[i]).jld")["model"]
     w = map(a->convert(atype, a), w)
     push!(models, w)
   end
@@ -474,6 +488,23 @@ function savefeats(data; scales = [225 256 128 192 64], atype = KnetArray{Float3
   end
 end
 
+function getmeansketch(datatrn)
+  count = 0
+  meansketch = nothing
+  for (x, y) in datatrn
+    for i = 1:size(x, 4)
+      if meansketch == nothing
+        meansketch = x[:, :, :, i]
+      else
+        meansketch += x[:, :, :, i]
+      end
+    end
+    count += size(x, 4)
+  end
+  meansketch = meansketch/count
+  return meansketch
+end
+
 function main(args=ARGS)
   s = ArgParseSettings()
   s.description="SketchANet.jl: Sketch-a-Net that Beats Humans based on https://arxiv.org/abs/1501.07873. (c) Kurmanbek Kaiyrbekov 2017."
@@ -483,6 +514,7 @@ function main(args=ARGS)
     ("--readydata"; action=:store_true; help="is data preprocessed and ready")
     ("--readyindx"; action=:store_true; help="check if train and test indices are ready")
     ("--testmode"; action=:store_true; help="true if in test mode")
+    ("--pretrained"; action=:store_true; help="true if pretrained model exists")
     ("--featgenmode"; action=:store_true; help="true if in feature generation")
     ("--imsize"; arg_type=Int; default=225; help="Size of input image")
     ("--epochs"; arg_type=Int; default=1; help="Number of epochs for training.")
@@ -494,7 +526,7 @@ function main(args=ARGS)
 
   #global batchsize = 50
   #global datapath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/data"
-  lr = 0.04
+  lr = 0.001
   global const channels = 6
   if !o[:readyindx]
     info("Indices are not ready")
@@ -508,8 +540,14 @@ function main(args=ARGS)
 
   if o[:testmode]
     info("In test mode.")
+    if isfile("$(jldpath)/meansketch$(o[:imsize]).jld")
+      meansketch = load("$(jldpath)/meansketch$(o[:imsize]).jld")["meansketch"]
+      println("meansketch loaded")
+    else
+      error("No mean sketch file found")
+    end
     datatst = load("$(jldpath)/datatst225.jld")["datatst"]
-    testaccuracy = test(datatst; scales = [225], atype = atype)
+    testaccuracy = test(datatst, meansketch; scales = [225], atype = atype)
     println("Test accuracy: $(testaccuracy)")
   elseif o[:featgenmode]
     info("In feature generating mode.")
@@ -519,7 +557,13 @@ function main(args=ARGS)
     savefeats(data; scales = [225], train = true)
   else
     println("In train mode. Imsize=$(o[:imsize])")
-    w = weights(atype=atype)
+    if o[:pretrained]
+      w = load("$(jldpath)/Models/FloatModel/tmp/floatmodel$(o[:imsize]).jld")["model"]
+      w = map(a->convert(atype, a), w)
+      println("Pretrained model loaded!")
+    else
+      w = weights(atype=atype)
+    end
     prms = map(x->Adam(), w)
     global const cmap = initchannelmap()
 
@@ -538,22 +582,30 @@ function main(args=ARGS)
     #  save("$(jldpath)/datatst$(o[:imsize]).jld","datatst", datatst)
     end
 
+    if isfile("$(jldpath)/meansketch$(o[:imsize]).jld")
+      meansketch = load("$(jldpath)/meansketch$(o[:imsize]).jld")["meansketch"]
+    else
+      meansketch = getmeansketch(datatrn)
+      save("$(jldpath)/meansketch$(o[:imsize]).jld","meansketch", meansketch)
+    end
 
     trnlosses = []
     tstlosses = []
     trnerr  = []
     tsterr  = []
     iters = []
-    println("training started")
+    println("Training started, learning rate = $(lr)")
     flush(STDOUT)
     #addprocs(1)
-    for i=1:500
-      w = trainvanilla(w, prms, datatrn; lr=lr, epochs = 1, atype=atype)
+    for i=1:200
+      w = trainvanilla(w, prms, datatrn, meansketch; limit = length(datatrn), lr=lr, epochs = 1, atype=atype)
       tstacc, tstloss = 0, 0
       trnacc, trnloss = 0, 0
-    #  if i%50 == 0
-        trnacc, trnloss = accuracyvanilla(w, datatrn; atype=atype)
-  #    end
+      if i%25 == 0
+        trnacc, trnloss = accuracyvanilla(w, datatrn, meansketch; limit = length(datatrn), atype=atype)
+        @printf("epoch: %d trn accuracy-loss: %g - %g tst accuracy-loss: %g - %g\n", i, trnacc, trnloss, tstacc, tstloss)
+        flush(STDOUT)
+      end
       #tstacc, tstloss = accuracyvanilla(w, datatst; atype=atype)
       if i%100 == 0
         lr = lr/2
@@ -563,20 +615,17 @@ function main(args=ARGS)
   #		append!(iters, i)
   	#	append!(tsterr, 1-tstacc)
   #		append!(trnerr, 1-trnacc)
-      @printf("epoch: %d trn accuracy-loss: %g - %g tst accuracy-loss: %g - %g\n", i, trnacc, trnloss, tstacc, tstloss)
-    #  if i%50 == 0
-        flush(STDOUT)
-  #    end
+
       if i%50 == 0
         floatmodel = map(a->convert(Array{Float32}, a), w)
-        save("$(jldpath)/tmpfloatnewfinalmodel$(o[:imsize]).jld","model", floatmodel)
+        save("$(jldpath)/tmpSAfloat$(i)model$(o[:imsize]).jld","model", floatmodel)
       end
       #flush(STDOUT)
     end
     #save("$(jldpath)/knetarrmodel$(o[:imsize]).jld","model", w)
     floatmodel = map(a->convert(Array{Float32}, a), w)
-    save("$(jldpath)/randnfloatnewfinalmodel$(o[:imsize]).jld","model", floatmodel)
-    save("$(jldpath)/randnfloatnewfinalmodel$(o[:imsize]).jld","model", w)
+    save("$(jldpath)/SAfloatfinalmodel$(o[:imsize]).jld","model", floatmodel)
+    save("$(jldpath)/SAknetarrmodel$(o[:imsize]).jld","model", w)
   #  saveplots(iters, trnlosses, tstlosses, trnerr, tsterr, "loss$(o[:imsize])", "err$(o[:imsize])")
   end
 
