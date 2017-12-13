@@ -1,6 +1,6 @@
-include("Sketch.jl")
-include("Preprocessor.jl")
-include("SketchGetter.jl")
+include("../utils/Sketch.jl")
+include("../utils/Preprocessor.jl")
+include("../utils/SketchGetter.jl")
 
 module SketchANet
 using Knet
@@ -15,10 +15,6 @@ global const jldpath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/dataJLD"
 function loss(w, x, ygold; lambda=0.000001)
   ypred = predict(w,x)
   ynorm = logp(ypred,1)
-#= reg = 0
-  if lambda != 0
-    reg = (lambda/2) * sum(sumabs2(wi) for wi in w[1:2:end])
-  end=#
   return -sum(ygold .* ynorm)/size(ygold, 2)
 end
 
@@ -39,7 +35,6 @@ function accuracy(w, dataind; atype = Array{Float32} )
     (x,ygold) = getbatch(batchind; atype=atype)
     ypred = predict(w, x)
     correct += countcorrect(ypred, ygold)
-#    println("batch: $batchnum correct: $correct")
     softloss += loss(w, x, ygold)
   end
   return correct/length(dataind), softloss/length(dataind)
@@ -124,7 +119,6 @@ function accuracyvanilla(w, data, meansketch; limit = length(data), atype = Arra
     ygold = convert(atype, ygold)
     ypred = predict(w, x; dprob=0)
     correct += countcorrect(ypred, ygold)
-#    println("batch: $batchnum correct: $correct")
     softloss += loss(w, x, ygold)
     ninstance += size(ygold, 2)
     if limit < 0
@@ -610,23 +604,15 @@ function main(args=ARGS)
       if i%100 == 0
         lr = lr/2
       end
-    #  append!(trnlosses, trnloss)
-  	#	append!(tstlosses, tstloss)
-  #		append!(iters, i)
-  	#	append!(tsterr, 1-tstacc)
-  #		append!(trnerr, 1-trnacc)
-
       if i%50 == 0
         floatmodel = map(a->convert(Array{Float32}, a), w)
         save("$(jldpath)/tmpSAfloat$(i)model$(o[:imsize]).jld","model", floatmodel)
       end
-      #flush(STDOUT)
+      flush(STDOUT)
     end
-    #save("$(jldpath)/knetarrmodel$(o[:imsize]).jld","model", w)
     floatmodel = map(a->convert(Array{Float32}, a), w)
     save("$(jldpath)/SAfloatfinalmodel$(o[:imsize]).jld","model", floatmodel)
     save("$(jldpath)/SAknetarrmodel$(o[:imsize]).jld","model", w)
-  #  saveplots(iters, trnlosses, tstlosses, trnerr, tsterr, "loss$(o[:imsize])", "err$(o[:imsize])")
   end
 
 
