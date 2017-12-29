@@ -16,8 +16,8 @@ end
 function minibatch!(data, dataind, imgindx; imsize::Int = 225)
   #=
   data -> array of (x,y) batches to update
-  dataind -> array of all file indices range = [1,20000]
-  imgindx -> index of an augmented image range = [1, # of tranformations]
+  dataind -> array of all file indices; range = [1,20000]
+  imgindx -> index of an augmented image; range = [1, # of tranformations]
   =#
   numbatches = Integer(length(dataind)/batchsize)
   for batchnum=1:numbatches
@@ -29,10 +29,10 @@ end
 
 function getbatch(batchind, imindex; classnum::Int = 250, imsize::Int = 225, trgsize::Int = 225)
   len = length(batchind)
-  #define data and labels for batch
+  #define data and labels for a batch
   data = Array{Float32}(trgsize, trgsize, channels, len)
   labels = zeros(Float32, classnum, len)
-  #initialize each instance and label of batch
+  #initialize each instance and label of a batch
   fillbatch!(data, labels, imindex, imsize, batchind, len)
   return (data, labels)
 end
@@ -43,7 +43,6 @@ function fillbatch!(data, labels, imindex, imsize::Int, batchind, len)
     class, instancenum = filenum2ind(filenum)
     labels[class, i] = 1
     initvolume!(data, i, datapath, class, cmap, instancenum, imindex; imsize = imsize)
-    #println(sum(data[:, :, :, i]))
   end
 end
 
@@ -88,7 +87,7 @@ function savedata(dataperclass, partition; imsize::Int = 225, readyindx::Bool = 
   if !readyindx
     println("Indices are not ready")
     part1, part2, part3 = split(dataperclass; readyindx=o[:readyindx])
-    
+
   end
 
   trnind_1, tstind_1 = vcat(part1, part2), part3
@@ -105,28 +104,21 @@ function main(args=ARGS)
   s.description="My Model. (c) Kurmanbek Kaiyrbekov 2017."
   s.exc_handler=ArgParse.debug_handler
   @add_arg_table s begin
-    ("--readydata"; action=:store_true; help="is data preprocessed and ready")
-    ("--readyindx"; action=:store_true; help="check if train and test indices are ready")
+    ("--readydata"; action=:store_true; help="Is the data preprocessed and ready?")
+    ("--readyindx"; action=:store_true; help="Check if train and test indices are ready")
     ("--imsize"; arg_type=Int; default=225; help="Size of input image")
-    ("--partition"; arg_type=Int; default=1; help="Size of input image")
+    ("--partition"; arg_type=Int; default=1; help="Number of parts")
   end
   println(s.description)
   isa(args, AbstractString) && (args=split(args))
   o = parse_args(args, s; as_symbols=true)
   dataperclass = 80
-
-  #global batchsize = 50
-  #global datapath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/data"
   lr = 0.01
   global const channels = 6
   global const cmap = initchannelmap()
   if !o[:readyindx]
     info("Indices are not ready")
   end
-
-
-
-
 end
 
 end

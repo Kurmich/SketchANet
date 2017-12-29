@@ -9,7 +9,7 @@ end
 function addstroke!(sketch::Sketch, stroke::Array)
   #add strokes to sketch and add ending index of the stroke
   sketch.strokes = hcat(sketch.strokes, stroke)
-  #if this is first stroke of sketch
+  #if this is the first stroke of the sketch
   if length(sketch.end_indices) == 0
     sketch.end_indices = hcat(sketch.end_indices, length(stroke))
   else
@@ -27,11 +27,11 @@ function printcontents(sketch::Sketch)
   #iterate through strokes
   for ending_index in sketch.end_indices
     println("Points of stroke $strokenum")
-    #print points of stroke
+    #print points of the stroke
     for i = start:ending_index
       println("x = $(sketch.strokes[1, i]) y = $(sketch.strokes[2, i])")
     end
-    #set new stroke start index
+    #set a new stroke start index
     start = ending_index + 1
     strokenum += 1
   end

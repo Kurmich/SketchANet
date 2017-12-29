@@ -62,7 +62,7 @@ function train(w, prms, data, meansketch; limit = length(data), lr = 0.1, epochs
 end
 
 function trainvanilla(w, prms, data, meansketch; limit = length(data), lr = 0.1, epochs = 1, atype = Array{Float32})
-  #check for edge cases of bacthcount
+  #train network with vanilla SGD parameter update
   for epoch=1:epochs
     for (x,y) in data
       newx = perturb(x, meansketch)
@@ -130,7 +130,7 @@ function accuracyvanilla(w, data, meansketch; limit = length(data), atype = Arra
 end
 
 function dropout(x, prob)
-  #individual nodes are dropped out of net with probability=1-prob and kept with probability=prob
+  #individual nodes are dropped out of network with probability=1-prob and kept with probability=prob
   if prob > 0
      (x .* convert(KnetArray{Float32}, (rand!( zeros( size(x) ) )).> prob )) ./ (1-prob)
   else
@@ -168,8 +168,8 @@ end
 function minibatch!(data, dataind, imgindx; imsize::Int = 225)
   #=
   data -> array of (x,y) batches to update
-  dataind -> array of all file indices range = [1,20000]
-  imgindx -> index of an augmented image range = [1, # of tranformations]
+  dataind -> array of all file indices; range = [1,20000]
+  imgindx -> index of an augmented image; range = [1, # of tranformations]
   =#
   numbatches = Integer(length(dataind)/batchsize)
   for batchnum=1:numbatches
@@ -181,10 +181,10 @@ end
 
 function getbatch(batchind, imindex; classnum::Int = 250, imsize::Int = 225, trgsize::Int = 225)
   len = length(batchind)
-  #define data and labels for batch
+  #define data and labels for a batch
   data = Array{Float32}(trgsize, trgsize, channels, len)
   labels = zeros(Float32, classnum, len)
-  #initialize each instance and label of batch
+  #initialize each instance and label of a batch
   fillbatch!(data, labels, imindex, imsize, batchind, len)
   return (data, labels)
 end
@@ -195,7 +195,6 @@ function fillbatch!(data, labels, imindex, imsize::Int, batchind, len)
     class, instancenum = filenum2ind(filenum)
     labels[class, i] = 1
     initvolume!(data, i, datapath, class, cmap, instancenum, imindex; imsize = imsize)
-    #println(sum(data[:, :, :, i]))
   end
 end
 
@@ -274,11 +273,11 @@ function gettraintestindices(dataperclass; trainpercent::Float64 = 0.67, classnu
     tstind = load("$(jldpath)/testindices.jld")["tstind"]
     return trnind, tstind
   end
-  #number of training samples per classs
+  #number of training samples per class
   traincount = Int(round(trainpercent*dataperclass))
   first  = Int(round(traincount/2))
   second = traincount - first
-  #random permutation of indexes in single class
+  #random permutation of indexes in a single class
   perm = randperm(dataperclass)
   trnind = perm[1:traincount] #file indices for training
   tstind = perm[traincount+1:end] #file indices for testing
@@ -291,8 +290,7 @@ function gettraintestindices(dataperclass; trainpercent::Float64 = 0.67, classnu
   end
   trnind = shuffle(trnind)
   tstind = shuffle(tstind)
-#  save("$(jldpath)/trainindices.jld","trnind", trnind)
-#  save("$(jldpath)/testindices.jld","tstind", tstind)
+
   return trnind, tstind
 end
 
@@ -309,11 +307,11 @@ end
 
 
 function split(dataperclass; trainpercent::Float64 = 0.67, classnum::Int = 250, N::Int = 80, readyindx::Bool = false)
-  #number of training samples per classs
+  #number of training samples per class
   traincount = Int(round(trainpercent*dataperclass))
   first  = Int(round(traincount/2))
   second = traincount - first
-  #random permutation of indexes in single class
+  #random permutation of indexes in a single class
   perm = randperm(dataperclass)
   #file indices for splits 1,2,3
   part1 = perm[1:first]
@@ -397,7 +395,7 @@ function test(data, meansketch; scales = [225 256 128 192 64], atype = KnetArray
 end
 
 function updateypred!(data, model, ypred, shifts, meansketch; atype = KnetArray{Float32})
-  #iteratte over data
+  #iterate over data
   for bind=1:length(data)
     x = data[bind][1]
     shiftcnt = size(shifts, 1)
@@ -419,7 +417,8 @@ end
 
 
 function extractfeat(w, x)
-  #Extracts features of the penultimate layer
+  #Extracts features of the penultimate layer#
+
   x = pool(relu(conv4(w[1],x;padding=0, stride=3) .+ w[2]); window=3, stride=2)
   x = pool(relu(conv4(w[3],x;padding=0, stride=1) .+ w[4]); window=3, stride=2)
   for i=5:2:9
@@ -517,11 +516,9 @@ function main(args=ARGS)
   isa(args, AbstractString) && (args=split(args))
   o = parse_args(args, s; as_symbols=true)
   dataperclass = 80
-
-  #global batchsize = 50
-  #global datapath = "/mnt/kufs/scratch/kkaiyrbekov15/Sketch Network/data"
   lr = 0.001
   global const channels = 6
+
   if !o[:readyindx]
     info("Indices are not ready")
   end
@@ -536,15 +533,15 @@ function main(args=ARGS)
     info("In test mode.")
     if isfile("$(jldpath)/meansketch$(o[:imsize]).jld")
       meansketch = load("$(jldpath)/meansketch$(o[:imsize]).jld")["meansketch"]
-      println("meansketch loaded")
+      println("Meansketch was loaded")
     else
-      error("No mean sketch file found")
+      error("Couldn't find mean sketch file")
     end
     datatst = load("$(jldpath)/datatst225.jld")["datatst"]
     testaccuracy = test(datatst, meansketch; scales = [225], atype = atype)
     println("Test accuracy: $(testaccuracy)")
   elseif o[:featgenmode]
-    info("In feature generating mode.")
+    info("In feature generation mode.")
     data = load("$(jldpath)/datatst225.jld")["datatst"]
     savefeats(data; scales = [225], train = false)
     data = load("$(jldpath)/datatrn225.jld")["datatrn"]
@@ -561,7 +558,6 @@ function main(args=ARGS)
     prms = map(x->Adam(), w)
     global const cmap = initchannelmap()
 
-    #println("Type of o[:imsize] $(typeof(o[:imsize]))")
     if o[:readydata]
       println("Data is ready")
       datatrn = load("$(jldpath)/datatrn$(o[:imsize]).jld")["datatrn"]
@@ -590,7 +586,6 @@ function main(args=ARGS)
     iters = []
     println("Training started, learning rate = $(lr)")
     flush(STDOUT)
-    #addprocs(1)
     for i=1:200
       w = trainvanilla(w, prms, datatrn, meansketch; limit = length(datatrn), lr=lr, epochs = 1, atype=atype)
       tstacc, tstloss = 0, 0
@@ -614,9 +609,6 @@ function main(args=ARGS)
     save("$(jldpath)/SAfloatfinalmodel$(o[:imsize]).jld","model", floatmodel)
     save("$(jldpath)/SAknetarrmodel$(o[:imsize]).jld","model", w)
   end
-
-
-
 end
 
 main()

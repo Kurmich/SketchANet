@@ -1,7 +1,8 @@
 module SketchGetter
 using SKETCH
 using Preprocessor
-#import Preprocessor.translate2origin!
+
+
 function geteitzsketches(class; completness=1)
   foldername = "/home/kurmanbek/Desktop/EitzSketches/"
   from = (class-1) * 80 + 1
@@ -14,10 +15,6 @@ function geteitzsketches(class; completness=1)
       fid = open(filename)
       sketch = txt2sketch(fid, filenum; completness=completness)
       push!(sketches, sketch)
-      #push!(sketches, sketch)
-      #translate2origin!(sketch)
-      #printcontents(sketch)
-      #close(fid)
     end
     from = to + 1
   end
@@ -31,7 +28,7 @@ end
 function txt2sketch(fid,  sketchid; completness=1)
   strokes = Float64[]
   indices = Int[]
-  #Read all lines
+  #Read all lines of the file
   lines  = readlines(fid)
   prev_end_index = 0
   strokecount = 0
@@ -58,9 +55,8 @@ function txt2sketch(fid,  sketchid; completness=1)
       append!(strokes, parse(Float64, splt[2]))
     end
   end
-
   strokes = reshape(strokes, (2, convert(Int64, length(strokes)/2)))
-  #println(indices)
+  
   return Sketch("$sketchid", strokes, indices)
 end
 export geteitzsketches

@@ -1,4 +1,4 @@
-#Linear SVM model trained using penultimate layer
+#Linear SVM model trained using outputs of the penultimate layer of SketchANet
 module SVMTrain
 import SVR
 using JLD

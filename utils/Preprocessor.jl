@@ -58,7 +58,7 @@ function stretch(sketch::Sketch, stretchfactor::Number, horizontal = true)
 end
 
 function applytransformation(sketch::Sketch, factor::Number, transmat::Array, name::String)
-  #applies specified tranformation to all points if sketch
+  #applies specified tranformation to all points of the sketch
   newstrokes = transmat*sketch.strokes
   newid = "$(sketch.sketch_id)$(name)by$factor"
   return Sketch(newid, newstrokes, sketch.end_indices)
@@ -86,7 +86,8 @@ function rotate(sketch::Sketch, angle::Number, center=[0 0])
 end
 
 function plotSketch(sketch::Sketch)
-  #Prints contents of current sketch
+  #Print contents of current sketch#
+
   start = 1
   strokenum = 1
   #iterate through strokes
@@ -94,8 +95,6 @@ function plotSketch(sketch::Sketch)
     x = sketch.strokes[1, start:ending_index]
     y = sketch.strokes[2, start:ending_index]
     plot(x, y, linewidth = 1)
-    #xlim(0, 1000)
-    #ylim(0, 200)
     #set new stroke start index
     start = ending_index + 1
     strokenum += 1
@@ -103,7 +102,7 @@ function plotSketch(sketch::Sketch)
 end
 
 function saveSketch(sketch::Sketch, filename::String = "test.png"; completness=1, scaled = true)
-  #Prints contents of current sketch
+  #Save sketch as image#
   start = 1
   strokenum = 0
   mydpi = 100
@@ -112,7 +111,7 @@ function saveSketch(sketch::Sketch, filename::String = "test.png"; completness=1
   strokelimit = strokelimit = Integer(ceil(completness*length(sketch.end_indices)))
   for ending_index in sketch.end_indices
     strokenum += 1
-    #get points of stroke
+    #get points of the stroke
     x = []
     y = []
     for i = start:ending_index
@@ -198,7 +197,8 @@ end
 
 
 function renderSketch!(sketch, image, pixels = nothing)
-  #renders stroke to image array
+  #Render stroke to image array#
+
   setnewxrange!(sketch, 350, 50)
   setnewyrange!(sketch, 350, 50)
   if pixels == nothing
@@ -213,7 +213,6 @@ function renderSketch!(sketch, image, pixels = nothing)
       y2 = sketch.strokes[2, i+1]
       x, y = bresenham(x1, y1, x2, y2)
       for j = 1:length(x)
-        #println( " x = $(x[j]) y = $(y[j])")
         if image[size(image)[1] - y[j], x[j]] > pixels[i]
           image[size(image)[1] - y[j], x[j]] = pixels[i]
         end
@@ -221,7 +220,7 @@ function renderSketch!(sketch, image, pixels = nothing)
     end
     start = ending_index + 1
   end
-  #println("sum = """")
+
   save("newtest.jpg", image)
 end
 
@@ -276,7 +275,6 @@ function imscale(img, new_img, scale)
   newC = Int(floor(scale*C))
   sR = Int(floor(abs(newR-R)/2))
   sC = Int(floor(abs(newC-C)/2))
-  #println("$newR $sR $(size(img, 1))")
   img = Images.imresize(img, (newR, newC, size(img, 3)))
   if scale < 1
     new_img[sR+1:sR+newR, sC+1:sC+newC, :] = img
